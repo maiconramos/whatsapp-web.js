@@ -4,13 +4,15 @@ const { body, validationResult } = require('express-validator');
 const socketIO = require('socket.io');
 const qrcode = require('qrcode');
 const http = require('http');
+const { WebhookClient } = require('dialogflow-fulfillment');
+const dialogflow = require('@google-cloud/dialogflow');
 const fs = require('fs');
 const { phoneNumberFormatter } = require('./helpers/formatter');
 const fileUpload = require('express-fileupload');
 const axios = require('axios');
 const mime = require('mime-types');
 
-const port = process.env.PORT || 8000;
+const port = process.env.PORT || 8002;
 
 const app = express();
 const server = http.createServer(app);
@@ -29,7 +31,7 @@ let sessionCfg;
 if (fs.existsSync(SESSION_FILE_PATH)) {
   sessionCfg = require(SESSION_FILE_PATH);
 }
-
+app.use(express.static('/assets'));
 app.get('/', (req, res) => {
   res.sendFile('index.html', {
     root: __dirname
@@ -54,7 +56,31 @@ const client = new Client({
   session: sessionCfg
 });
 
-client.on('message', msg => {
+client.on('message', async msg => {
+console.log('recebeu mensagem');
+console.log(msg);
+
+/* Listening Dialogflow */
+  if (msg.type === 'chat') {
+      //integração de texto dialogflow
+      let textoResposta = await executeQueries(
+          'ID_PROJECT_GOOGLE',
+          msg.from,
+          [msg.body],
+          'pt-BR'
+      );
+      const contact = await msg.getContact();
+
+      // Dados 
+        const dados = `
+          Nome: *${contact.pushname}* \n
+          Seu número: *${contact.number}*  \n
+          Acessou via: *${msg.deviceType}* \n
+          Sua mensagem foi: *${msg.body}* \n
+        `
+      client.sendMessage(msg.from, textoResposta);
+  }
+
   if (msg.body == '!ping') {
     msg.reply('pong');
   } else if (msg.body == 'good morning') {
@@ -118,24 +144,24 @@ client.initialize();
 
 // Socket IO
 io.on('connection', function(socket) {
-  socket.emit('message', 'Connecting...');
+  socket.emit('message', 'Conectando...');
 
   client.on('qr', (qr) => {
     console.log('QR RECEIVED', qr);
     qrcode.toDataURL(qr, (err, url) => {
       socket.emit('qr', url);
-      socket.emit('message', 'QR Code received, scan please!');
+      socket.emit('message', 'QR Code recebido, Faça o Scanner!');
     });
   });
 
   client.on('ready', () => {
-    socket.emit('ready', 'Whatsapp is ready!');
-    socket.emit('message', 'Whatsapp is ready!');
+    socket.emit('ready', 'Whatsapp Está pronto!');
+    socket.emit('message', 'Whatsapp Está pronto!');
   });
 
   client.on('authenticated', (session) => {
-    socket.emit('authenticated', 'Whatsapp is authenticated!');
-    socket.emit('message', 'Whatsapp is authenticated!');
+    socket.emit('authenticated', 'Whatsapp está autenticado!');
+    socket.emit('message', 'Whatsapp está autenticado!');
     console.log('AUTHENTICATED', session);
     sessionCfg = session;
     fs.writeFile(SESSION_FILE_PATH, JSON.stringify(session), function(err) {
@@ -165,6 +191,52 @@ const checkRegisteredNumber = async function(number) {
   const isRegistered = await client.isRegisteredUser(number);
   return isRegistered;
 }
+
+// Responder chat dialogflow
+
+app.post('/send-message', [
+  body('number').notEmpty(),
+  body('message').notEmpty(),
+], async (req, res) => {
+  const errors = validationResult(req).formatWith(({
+    msg
+  }) => {
+    return msg;
+  });
+
+  if (!errors.isEmpty()) {
+    return res.status(422).json({
+      status: false,
+      message: errors.mapped()
+    });
+  }
+
+  const number = phoneNumberFormatter(req.body.number);
+  const message = req.body.message;
+
+  const isRegisteredNumber = await checkRegisteredNumber(number);
+
+  if (!isRegisteredNumber) {
+    return res.status(422).json({
+      status: false,
+      message: 'The number is not registered'
+    });
+  }
+
+  client.sendMessage(number, message).then(response => {
+    res.status(200).json({
+      status: true,
+      response: response
+    });
+  }).catch(err => {
+    res.status(500).json({
+      status: false,
+      response: err
+    });
+  });
+});
+
+
 
 // Send message
 app.post('/send-message', [
@@ -347,6 +419,76 @@ app.post('/clear-message', [
     });
   })
 });
+
+//webhook dialogflow
+app.post('/webhook', function (request, response) {
+  console.log('Abriu dialogflow');
+  const agent = new WebhookClient({ request, response });
+  let intentMap = new Map();
+  intentMap.set('nomedaintencao', nomedafuncao);
+  agent.handleRequest(intentMap);
+});
+function nomedafuncao(agent) { }
+
+const sessionClient = new dialogflow.SessionsClient({
+  keyFilename: 'CREDENCIAL_PROJECT_GOOGLE.json'
+});
+
+async function detectIntent(
+  projectId,
+  sessionId,
+  query,
+  contexts,
+  languageCode
+) {
+  const sessionPath = sessionClient.projectAgentSessionPath(
+      projectId,
+      sessionId
+  );
+
+  // The text query request.
+  const request = {
+      session: sessionPath,
+      queryInput: {
+          text: {
+              text: query,
+              languageCode: languageCode
+          }
+      }
+  };
+
+  if (contexts && contexts.length > 0) {
+      request.queryParams = {
+          contexts: contexts
+      };
+  }
+
+  const responses = await sessionClient.detectIntent(request);
+  return responses[0];
+}
+
+async function executeQueries(projectId, sessionId, queries, languageCode) {
+  let context;
+  let intentResponse;
+  for (const query of queries) {
+      try {
+          console.log(`Pergunta: ${query}`);
+          intentResponse = await detectIntent(
+              projectId,
+              sessionId,
+              query,
+              context,
+              languageCode
+          );
+          console.log('Enviando Resposta');
+          console.log(intentResponse.queryResult.fulfillmentText);
+          return `${intentResponse.queryResult.fulfillmentText}`;
+      } catch (error) {
+          console.log(error);
+      }
+  }
+}
+
 
 server.listen(port, function() {
   console.log('App running on *: ' + port);

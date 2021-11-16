@@ -23,6 +23,8 @@
     "mime-types": "^2.1.32",
     "qrcode": "^1.4.4",
     "socket.io": "2.3.0",
+    "@google-cloud/dialogflow": "^4.5.0",
+    "dialogflow-fulfillment": "^0.6.1",
     "whatsapp-web.js": "latest"
   },
   "devDependencies": {
