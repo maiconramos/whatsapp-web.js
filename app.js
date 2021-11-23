@@ -64,7 +64,7 @@ console.log(msg);
   if (msg.type === 'chat') {
       //integração de texto dialogflow
       let textoResposta = await executeQueries(
-          'ID_PROJECT_GOOGLE',
+          'PROJECT_ID_GOOGLE',
           msg.from,
           [msg.body],
           'pt-BR'
@@ -192,6 +192,40 @@ const checkRegisteredNumber = async function(number) {
   return isRegistered;
 }
 
+// Endpoint verify whatsapp exist
+
+app.post('/whatsapp-verify', [
+  body('number').notEmpty(),
+], async (req, res) => {
+  const errors = validationResult(req).formatWith(({
+    msg
+  }) => {
+    return msg;
+  });
+
+  if (!errors.isEmpty()) {
+    return res.status(422).json({
+      status: false,
+      message: errors.mapped()
+    });
+  }
+
+  const number = phoneNumberFormatter(req.body.number);
+  const isRegisteredNumber = await checkRegisteredNumber(number);
+
+  if (isRegisteredNumber) {
+    return res.status(200).json({
+      status: true,
+      message: 'The number is registered'
+    });
+  } else {
+    return res.status(200).json({
+      status: false,
+      message: 'The number is not registered'
+    });
+  }
+});
+
 // Responder chat dialogflow
 
 app.post('/send-message', [
@@ -236,50 +270,6 @@ app.post('/send-message', [
   });
 });
 
-
-
-// Send message
-app.post('/send-message', [
-  body('number').notEmpty(),
-  body('message').notEmpty(),
-], async (req, res) => {
-  const errors = validationResult(req).formatWith(({
-    msg
-  }) => {
-    return msg;
-  });
-
-  if (!errors.isEmpty()) {
-    return res.status(422).json({
-      status: false,
-      message: errors.mapped()
-    });
-  }
-
-  const number = phoneNumberFormatter(req.body.number);
-  const message = req.body.message;
-
-  const isRegisteredNumber = await checkRegisteredNumber(number);
-
-  if (!isRegisteredNumber) {
-    return res.status(422).json({
-      status: false,
-      message: 'The number is not registered'
-    });
-  }
-
-  client.sendMessage(number, message).then(response => {
-    res.status(200).json({
-      status: true,
-      response: response
-    });
-  }).catch(err => {
-    res.status(500).json({
-      status: false,
-      response: err
-    });
-  });
-});
 
 // Send media
 app.post('/send-media', async (req, res) => {
@@ -431,7 +421,7 @@ app.post('/webhook', function (request, response) {
 function nomedafuncao(agent) { }
 
 const sessionClient = new dialogflow.SessionsClient({
-  keyFilename: 'CREDENCIAL_PROJECT_GOOGLE.json'
+  keyFilename: 'PROJECT.json'
 });
 
 async function detectIntent(
